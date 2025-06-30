@@ -32,7 +32,8 @@ function App() {
     { x: 6, y: 10 },
   ]);
   const [dir, setDir] = useState("ArrowRight");
-  const [pendingDir, setPendingDir] = useState(null);
+  // Queue to track multiple pending directions for responsive control
+  const [dirQueue, setDirQueue] = useState([]);
   const [food, setFood] = useState({ x: 13, y: 6 });
   const [score, setScore] = useState(0);
   const [speed, setSpeed] = useState(INITIAL_SPEED);
@@ -54,19 +55,18 @@ function App() {
   // PUBLIC_INTERFACE
   // Main game movement loop
   useEffect(() => {
-    if (gameOver) {
-      if (moveInterval.current) clearInterval(moveInterval.current);
-      return;
+    if (moveInterval.current) clearInterval(moveInterval.current);
+    if (!gameOver) {
+      moveInterval.current = setInterval(() => {
+        step();
+      }, speed);
     }
-    moveInterval.current = setInterval(() => {
-      step();
-    }, speed);
-
     return () => {
       clearInterval(moveInterval.current);
     };
+    // Only restart interval for speed change or game over, not snake/dir
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snake, dir, speed, gameOver]);
+  }, [speed, gameOver]);
 
   // Animate food pulse for visual feedback
   useEffect(() => {
@@ -80,15 +80,22 @@ function App() {
 
   // Keyboard controls
   useEffect(() => {
+    // Handles keydown with direction queue and input buffering
     const onKey = (e) => {
       if (!Object.keys(DIRS).includes(e.key)) return;
       if (gameOver) return;
-      if (OPPOSITE[e.key] === dir) return; // Prevent 180 reverse
-      setPendingDir((old) => (old === e.key ? old : e.key));
+      // Add new direction if not same or opposite as the latest queued or current
+      setDirQueue((oldQ) => {
+        const last = oldQ.length > 0 ? oldQ[oldQ.length - 1] : dir;
+        if (e.key === last) return oldQ; // ignore repeated
+        if (OPPOSITE[e.key] === last) return oldQ; // ignore opposite
+        return [...oldQ, e.key];
+      });
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+    // Dir no longer a dependency; gameOver disables all keys
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dir, gameOver]);
 
@@ -103,13 +110,18 @@ function App() {
   const step = useCallback(() => {
     if (gameOver) return;
 
-    let nextDir = pendingDir && OPPOSITE[pendingDir] !== dir ? pendingDir : dir;
-    setDir(nextDir);
-    setPendingDir(null);
+    // Use the next valid direction if any in queue, otherwise continue
+    let newDir = dir;
+    if (dirQueue.length > 0) {
+      // Only allow non-opposite direction (already filtered in queue logic)
+      newDir = dirQueue[0];
+    }
+    setDir(newDir);
+    setDirQueue(queue => queue.slice((queue.length > 0) ? 1 : 0)); // remove only if used
 
     // Calculate next head position
     const head = { ...snake[0] };
-    const delta = DIRS[nextDir];
+    const delta = DIRS[newDir];
     head.x += delta.x;
     head.y += delta.y;
 
@@ -158,7 +170,8 @@ function App() {
 
     setSnake(newSnake);
     setLastMove(Date.now());
-  }, [snake, dir, pendingDir, food, gameOver]);
+    // No return value
+  }, [snake, dir, dirQueue, food, gameOver]);
 
   // PUBLIC_INTERFACE
   // Start/restart game
@@ -169,7 +182,7 @@ function App() {
       { x: 6, y: 10 },
     ]);
     setDir("ArrowRight");
-    setPendingDir(null);
+    setDirQueue([]);
     setFood({
       x: Math.floor(Math.random() * BOARD_SIZE),
       y: Math.floor(Math.random() * BOARD_SIZE),
@@ -184,8 +197,14 @@ function App() {
   // PUBLIC_INTERFACE
   // On-screen control panel for keyboard and touch
   const handleDirectionButton = (d) => {
-    if (OPPOSITE[d] === dir || gameOver) return;
-    setPendingDir(d);
+    if (gameOver) return;
+    // Add to direction queue with same logic as onKey
+    setDirQueue(oldQ => {
+      const last = oldQ.length > 0 ? oldQ[oldQ.length - 1] : dir;
+      if (d === last) return oldQ;
+      if (OPPOSITE[d] === last) return oldQ;
+      return [...oldQ, d];
+    });
   };
 
   // Renderers
